@@ -19,6 +19,8 @@ router = APIRouter()
 # Login (ruta /login)
 @router.post("/login", response_model=TokenResponse)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    print(f"Datos recibidos: username={form_data.username}, password={form_data.password}")
+
     # Busca al cliente en la base de datos por correo
     cliente = await collection_cliente.find_one({"correo": form_data.username})
     if not cliente:
