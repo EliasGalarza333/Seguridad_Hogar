@@ -1,12 +1,11 @@
+import traceback
 from datetime import datetime
 from typing import List
-
 from bson import ObjectId
 from fastapi import APIRouter
 from fastapi import HTTPException, Depends, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.security import OAuth2PasswordRequestForm
-
 from auth import get_current_user, oauth2_scheme, create_access_token, generar_contraseña_aleatoria, \
     encriptar_contraseña, verificar_contraseña
 from Modelos.models import collection_gas, collection_humo, collection_magnetico, collection_movimiento, collection_sonido
@@ -19,8 +18,6 @@ router = APIRouter()
 # Login (ruta /login)
 @router.post("/login", response_model=TokenResponse)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    print(f"Datos recibidos: username={form_data.username}, password={form_data.password}")
-
     # Busca al cliente en la base de datos por correo
     cliente = await collection_cliente.find_one({"correo": form_data.username})
     if not cliente:
@@ -92,6 +89,7 @@ async def create_cliente(
         )
         
         
+
 @router.get("/admin/clientes", response_model=List[Cliente])
 async def get_clientes(current_user: Cliente = Depends(get_current_user)):
     if current_user.rol != "admin":
@@ -101,63 +99,72 @@ async def get_clientes(current_user: Cliente = Depends(get_current_user)):
         )
 
     try:
-        cursor = collection_cliente.find(
-            {"rol": "cliente"},
-            {
-                "nombre": 1,
-                "correo": 1,
-                "rol": 1,
-                "casas": 1,
-                "_id": 1  # Incluimos el _id para evitar problemas
-            }
-        )
-        clientes = await cursor.to_list(length=None)
+        # Buscar clientes con rol "cliente"
+        cursor = collection_cliente.find({"rol": "cliente"})
+        clientes_raw = await cursor.to_list(length=None)
 
-        for cliente in clientes:
-            cliente.pop('contraseña', None)  # Eliminar el campo 'contraseña' si está presente
+        clientes_procesados = []
+        for cliente_data in clientes_raw:
+            # Convertir ObjectId a string para serialización
+            if '_id' in cliente_data:
+                cliente_data['id'] = str(cliente_data['_id'])
+                del cliente_data['_id']
 
-            # Cargar las casas completas, incluyendo sensores
-            casas_completas = []
-            for casa_id in cliente.get("casas", []):  # Obtener las casas de la lista de ObjectIds
-                casa = await collection_casa.find_one({"_id": ObjectId(casa_id)})
+            # Eliminar la contraseña si existe
+            cliente_data.pop('contraseña', None)
 
-                if casa:
-                    # Usar jsonable_encoder para asegurar que los datos se serialicen correctamente
-                    casa_serializable = jsonable_encoder(casa)
+            # Procesar las casas
+            casas_procesadas = []
+            for casa in cliente_data.get('casas', []):
+                # Verificar si 'casa' es un diccionario y contiene un 'id'
+                if isinstance(casa, dict) and '_id' in casa:
+                    # Convertir _id de casa a ObjectId si es un string
+                    if isinstance(casa['_id'], str):
+                        try:
+                            casa['_id'] = ObjectId(casa['_id'])
+                        except Exception as e:
+                            print(f"Error al convertir el _id de casa {casa['_id']} a ObjectId: {e}")
+                            continue
 
-                    # Obtener los detalles de los sensores asociados a la casa
-                    sensores_detallados = []
-                    for sensor_id in casa.get("sensores", []):
-                        # Dependiendo del tipo de sensor, buscamos en la colección correspondiente
-                        sensor_info = None
-                        if casa.get("sensor_tipo") == "gas":
-                            sensor_info = await collection_gas.find_one({"_id": ObjectId(sensor_id)})
-                        elif casa.get("sensor_tipo") == "humo":
-                            sensor_info = await collection_humo.find_one({"_id": ObjectId(sensor_id)})
-                        elif casa.get("sensor_tipo") == "movimiento":
-                            sensor_info = await collection_movimiento.find_one({"_id": ObjectId(sensor_id)})
-                        elif casa.get("sensor_tipo") == "sonido":
-                            sensor_info = await collection_sonido.find_one({"_id": ObjectId(sensor_id)})
-                        elif casa.get("sensor_tipo") == "magnetico":
-                            sensor_info = await collection_magnetico.find_one({"_id": ObjectId(sensor_id)})
+                    casa_id = str(casa['_id'])  # Convertir ObjectId a string para la serialización
+                    casa_nombre = casa.get('nombre')
 
-                        if sensor_info:
-                            sensores_detallados.append(sensor_info)
+                    # Buscar información adicional de la casa usando su ObjectId
+                    try:
+                        casa_info = await collection_casa.find_one({"_id": casa['_id']})
+                        if casa_info:
+                            # Convertir cualquier ObjectId dentro de casa_info a string
+                            casa_info = {k: str(v) if isinstance(v, ObjectId) else v for k, v in casa_info.items()}
+                            casa_info['nombre'] = casa_nombre  # Mantener el nombre de la casa
 
-                    # Agregamos los sensores detallados a la casa
-                    casa_serializable["sensores"] = sensores_detallados
-                    casas_completas.append(casa_serializable)
+                            # Eliminar los sensores (si no los quieres mostrar)
+                            if 'sensores' in casa_info:
+                                del casa_info['sensores']
 
-            # Agregamos las casas completas al cliente
-            cliente["casas"] = casas_completas
+                            casas_procesadas.append(casa_info)
+                    except Exception as e:
+                        print(f"Error procesando casa con ID {casa_id}: {e}")
 
-        return [Cliente(**cliente) for cliente in clientes]
+            # Actualizar el campo de casas con las casas procesadas
+            cliente_data['casas'] = casas_procesadas
+
+            # Convertir el cliente a modelo Cliente
+            try:
+                cliente = Cliente(**cliente_data)
+                clientes_procesados.append(cliente)
+            except Exception as e:
+                print(f"Error procesando cliente: {e}")
+                print(f"Datos del cliente problemático: {cliente_data}")
+
+        return clientes_procesados
 
     except Exception as e:
+        print(traceback.format_exc())  # Imprimir traza completa del error
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al obtener los usuarios: {str(e)}"
         )
+
 
 @router.post("/admin/clientes/{cliente_id}/casas", response_model=Casa, status_code=status.HTTP_201_CREATED)
 async def agregar_casa_a_cliente(
@@ -185,189 +192,207 @@ async def agregar_casa_a_cliente(
         nueva_casa = {
             "nombre": casa.nombre,
             "direccion": casa.direccion,
-            "usuario_id": ObjectId(cliente_id),
             "sensores": casa.sensores
         }
         resultado = await collection_casa.insert_one(nueva_casa)
         nueva_casa["_id"] = resultado.inserted_id  # Agregar el ID generado a la casa
 
-        # Actualizar el cliente para agregar el ID de la nueva casa
+        # Actualizar el cliente para agregar el ID y el nombre de la nueva casa
         await collection_cliente.update_one(
             {"_id": ObjectId(cliente_id)},
-            {"$push": {"casas": nueva_casa["_id"]}},
-            {"nombre":str},
-            {"$push": {"casas": nueva_casa["nombre"]}}
+            {
+                "$push": {
+                    "casas": {
+                        "id": nueva_casa["_id"],
+                        "nombre": nueva_casa["nombre"]
+                    }
+                }
+            }
         )
 
         # Devolver la casa creada como respuesta
         return Casa(**nueva_casa)
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al agregar la casa: {str(e)}"
         )
-        
+     
+#Endpoint para ver las casas de cada usuario
+@router.get("/admin/clientes/{cliente_id}/casas-sensores", response_model=List[Casa])
+async def obtener_casas_cliente(
+    cliente_id: str,
+    current_user: Cliente = Depends(get_current_user)
+):
+    # Verificar permisos
+    if current_user.rol != "admin" and str(current_user.id) != cliente_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permiso para ver estas casas"
+        )
 
-@router.get("/admin/clientes/{cliente_id}/casas")
-async def get_casas_de_cliente(cliente_id: str, token: str = Depends(oauth2_scheme)):
     try:
-        # Validar el token y obtener el usuario actual
-        current_user = await get_current_user(token)
-
-        # Verificar que el cliente autenticado sea el propietario o tenga permisos de administrador
-        if str(current_user.id) != cliente_id and current_user.rol != "admin":
+        # Buscar cliente
+        cliente = await collection_cliente.find_one({"_id": ObjectId(cliente_id)})
+        if not cliente:
             raise HTTPException(
-                status_code=403,
-                detail="No tienes permiso para acceder a estas casas"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cliente no encontrado"
             )
 
-        # Buscar todas las casas asociadas al cliente
-        casas = await collection_casa.find({"usuario_id": ObjectId(cliente_id)}).to_list(length=None)
+        # Obtener IDs de casas desde el array de objetos
+        casas_ids = [ObjectId(casa["id"]) for casa in cliente.get("casas", [])]
+        if not casas_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Este cliente no tiene casas asociadas"
+            )
 
-        # Convertir ObjectId a string para serialización
-        casas_serializable = []
-        for casa in casas:
-            casa_serializable = {
-                "_id": str(casa["_id"]),
-                "nombre": casa["nombre"],
-                "direccion": casa["direccion"],
-                "usuario_id": str(casa["usuario_id"]),
-                "sensores": casa.get("sensores", [])
-            }
-            casas_serializable.append(casa_serializable)
+        # Buscar las casas por los IDs extraídos
+        casas = await collection_casa.find(
+            {"_id": {"$in": casas_ids}}
+        ).to_list(length=100)
 
-        return {"data": casas_serializable}
+        if not casas:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontraron casas para este cliente"
+            )
 
-    except HTTPException as he:
-        raise he
+        return casas
+
     except Exception as e:
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al obtener las casas: {str(e)}"
         )
 
-# Endpoint para ver los sensores asignados a cada casa de un cliente
-@router.post("/admin/clientes/{usuario_id}/casas/{casa_id}/sensores")
-async def agregar_sensor_a_casa(
-    usuario_id: str,
-    casa_id: str,
-    sensor_request: SensorRequest,
-    token: str = Depends(oauth2_scheme)
+@router.get("/admin/clientes/{cliente_id}/casas", response_model=List[Casa])
+async def obtener_casas_cliente_sin_sensores(
+    cliente_id: str,
+    current_user: Cliente = Depends(get_current_user)
 ):
-    try:
-        # Validar el token y obtener usuario
-        current_user = await get_current_user(token)
+    # Verificar permisos
+    if current_user.rol != "admin" and str(current_user.id) != cliente_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permiso para ver estas casas"
+        )
 
-        # Validar permisos: Admin o el mismo usuario
-        if str(current_user.id) != usuario_id and current_user.rol != "admin":
+    try:
+        # Buscar cliente
+        cliente = await collection_cliente.find_one({"_id": ObjectId(cliente_id)})
+        if not cliente:
             raise HTTPException(
-                status_code=403,
-                detail="No tienes permiso para modificar esta casa"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cliente no encontrado"
             )
 
-        # Verificar que la casa existe y pertenece al usuario
-        casa = await collection_casa.find_one({"_id": ObjectId(casa_id), "usuario_id": ObjectId(usuario_id)})
-        if not casa:
-            raise HTTPException(status_code=404, detail="Casa no encontrada o no pertenece al usuario")
+        # Obtener IDs de casas desde el array de objetos
+        casas_ids = [ObjectId(casa["id"]) for casa in cliente.get("casas", [])]
+        if not casas_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Este cliente no tiene casas asociadas"
+            )
 
-        # Determinar la colección de sensores según el tipo
-        tipo_sensor = sensor_request.tipo_sensor
-        sensor_collection = None
-        if tipo_sensor == "gas":
-            sensor_collection = collection_gas
-        elif tipo_sensor == "humo":
-            sensor_collection = collection_humo
-        elif tipo_sensor == "movimiento":
-            sensor_collection = collection_movimiento
-        elif tipo_sensor == "sonido":
-            sensor_collection = collection_sonido
-        elif tipo_sensor == "magnetico":
-            sensor_collection = collection_magnetico
-        else:
-            raise HTTPException(status_code=400, detail="Tipo de sensor no válido")
+        # Buscar las casas
+        casas = await collection_casa.find(
+            {"_id": {"$in": casas_ids}}
+        ).to_list(length=100)
 
-        # Insertar el sensor en la colección correspondiente
-        sensor_data = sensor_request.sensor_data
-        sensor_data["fecha_hora"] = datetime.utcnow()  # Agregar la fecha y hora actual
-        sensor_data["tipo"] = tipo_sensor  # Asegurar que se almacene el tipo de sensor
-        nuevo_sensor = await sensor_collection.insert_one(sensor_data)
+        if not casas:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontraron casas para este cliente"
+            )
 
-        # Actualizar la casa con la referencia al sensor
-        sensor_obj_id = nuevo_sensor.inserted_id
-        await collection_casa.update_one(
-            {"_id": ObjectId(casa_id)},
-            {"$push": {"sensores": {"sensor_obj_id": sensor_obj_id, "sensor_tipo": tipo_sensor}}}
-        )
+        # Ocultar el campo 'sensores' en la respuesta
+        casas_sin_sensores = [
+            {key: value for key, value in casa.items() if key != "sensores"}
+            for casa in casas
+        ]
 
-        return {"message": "Sensor agregado exitosamente", "sensor_id": str(sensor_obj_id)}
+        return casas_sin_sensores
 
-    except HTTPException as he:
-        raise he
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error al agregar el sensor a la casa: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener las casas: {str(e)}"
         )
 
-@router.get("/admin/clientes/{usuario_id}/casas/{casa_id}/sensores")
+
+@router.get("/admin/clientes/{cliente_id}/casas/{casa_id}/sensores") 
 async def obtener_sensores_de_casa(
-    usuario_id: str,
+    cliente_id: str,
     casa_id: str,
     token: str = Depends(oauth2_scheme)
 ):
     try:
-        # Validar el token y obtener usuario
+        # Validar el token y obtener usuario actual
         current_user = await get_current_user(token)
-
+        
         # Validar permisos: Admin o el mismo usuario
-        if str(current_user.id) != usuario_id and current_user.rol != "admin":
+        if str(current_user.id) != cliente_id and current_user.rol != "admin":
             raise HTTPException(
                 status_code=403,
                 detail="No tienes permiso para ver los sensores de esta casa"
             )
-
-        # Verificar que la casa existe y pertenece al usuario
-        casa = await collection_casa.find_one({"_id": ObjectId(casa_id), "usuario_id": ObjectId(usuario_id)})
+        
+        # Verificar que el usuario tiene la casa asociada
+        usuario = await collection_cliente.find_one({"_id": ObjectId(cliente_id)})
+        if not usuario:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        
+        # Validar que la casa está asociada al usuario
+        if not any(str(casa.get('id', '')) == casa_id for casa in usuario.get("casas", [])):
+            raise HTTPException(status_code=404, detail="La casa no pertenece al usuario")
+        
+        # Obtener la casa desde su colección
+        casa = await collection_casa.find_one({"_id": ObjectId(casa_id)})
         if not casa:
-            raise HTTPException(status_code=404, detail="Casa no encontrada o no pertenece al usuario")
-
-        # Obtener los sensores de la casa
-        sensores_referencias = casa.get("sensores", [])
-        sensores_detallados = []
-
-        for sensor_ref in sensores_referencias:
-            sensor_obj_id = sensor_ref.get("sensor_obj_id")
-            sensor_tipo = sensor_ref.get("sensor_tipo")
-
-            if not sensor_obj_id or not sensor_tipo:
-                continue  # Saltar si la referencia no es válida
-
-            sensor_info = None
-            if sensor_tipo == "gas":
-                sensor_info = await collection_gas.find_one({"_id": ObjectId(sensor_obj_id)})
-            elif sensor_tipo == "humo":
-                sensor_info = await collection_humo.find_one({"_id": ObjectId(sensor_obj_id)})
-            elif sensor_tipo == "movimiento":
-                sensor_info = await collection_movimiento.find_one({"_id": ObjectId(sensor_obj_id)})
-            elif sensor_tipo == "sonido":
-                sensor_info = await collection_sonido.find_one({"_id": ObjectId(sensor_obj_id)})
-            elif sensor_tipo == "magnetico":
-                sensor_info = await collection_magnetico.find_one({"_id": ObjectId(sensor_obj_id)})
-
-            if sensor_info:
-                # Formatear los datos del sensor para la respuesta
-                sensor_serializable = {
-                    "_id": str(sensor_info["_id"]),
-                    "tipo": sensor_tipo,
-                    "ubicacion": sensor_info.get("ubicacion", ""),
-                    "estado": sensor_info.get("estado", "desconocido"),
-                    "fecha_hora": sensor_info.get("fecha_hora", ""),
-                    # Otros campos específicos del sensor según su tipo
-                }
-                sensores_detallados.append(sensor_serializable)
-
-        return {"message": "Sensores obtenidos con éxito", "data": sensores_detallados}
-
+            raise HTTPException(status_code=404, detail="Casa no encontrada")
+        
+        # Obtener los IDs de sensores de la casa
+        sensores_ids = [str(sensor['sensor_obj_id']) if isinstance(sensor, dict) else str(sensor) for sensor in casa.get("sensores", [])]
+        
+        if not sensores_ids:
+            return {"message": "No hay sensores asociados a esta casa", "data": []}
+        
+        # Lista para almacenar todos los sensores
+        sensores_totales = []
+        
+        # Lista de colecciones de sensores (ajusta según tus colecciones específicas)
+        colecciones_sensores = [
+            collection_gas,
+            collection_humo,
+            collection_movimiento,
+            collection_sonido,
+            collection_magnetico
+            # Agrega aquí todas las colecciones de sensores que tengas
+        ]
+        
+        # Buscar cada sensor por su ID en todas las colecciones
+        for sensor_id in sensores_ids:
+            sensor_encontrado = False
+            for collection in colecciones_sensores:
+                sensor = await collection.find_one({"_id": ObjectId(sensor_id)})
+                if sensor:
+                    sensores_totales.append({
+                        "_id": str(sensor["_id"]),
+                        "tipo": sensor.get("tipo", "desconocido"),
+                        # Otros campos específicos según el tipo de sensor
+                    })
+                    sensor_encontrado = True
+                    break  # Salir del bucle de colecciones una vez encontrado
+            
+            # Opcional: manejar sensores no encontrados
+            if not sensor_encontrado:
+                print(f"Sensor con ID {sensor_id} no encontrado en ninguna colección")
+        
+        return {"message": "Sensores obtenidos con éxito", "data": sensores_totales}
+    
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -375,7 +400,6 @@ async def obtener_sensores_de_casa(
             status_code=500,
             detail=f"Error al obtener los sensores: {str(e)}"
         )
-
 
 # Endpoint para buscar clientes por nombre o correo
 @router.get("/admin/clientes/buscar/", response_model=List[Cliente])
@@ -409,9 +433,7 @@ async def buscar_clientes( termino: str, current_user: dict = Depends(get_curren
             detail=f"Error en la búsqueda: {str(e)}"
         )
         
-# Endpoint para obtener todos los clientes
-@router.get("/clientes", response_model=List[Cliente])
-async def get_clientes():
+
     try:
         # Obtiene solo los clientes con rol "cliente"
         clientes = await collection_cliente.find({"rol": "cliente"}).to_list(length=None)
