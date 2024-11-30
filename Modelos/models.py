@@ -31,52 +31,70 @@ class PyObjectId(ObjectId):
     @classmethod
     def validate(cls, v):
         if not ObjectId.is_valid(v):
-            raise ValueError("Invalid ObjectId")
+            raise ValueError('Invalid ObjectId')
         return ObjectId(v)
-    
-# Modelos de los sensores
+
 class SensorGas(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
-    ubicacion: str
-    nivel_gas: int
     fecha_hora: datetime
     estado: str
     tipo: str
+    
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda dt: dt.isoformat()
+        }
 
 class SensorHumo(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
-    ubicacion: str
-    nivel_humo: int
-    nivel_toxicidad: int
     fecha_hora: datetime
     estado: str
     tipo: str
+    
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda dt: dt.isoformat()
+        }
 
 class SensorMovimiento(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
-    ubicacion: str
-    intensidad: int
     fecha_hora: datetime
     estado: str
     tipo: str
+    
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda dt: dt.isoformat()
+        }
 
 class SensorSonido(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
-    ubicacion: str
-    nivel_sonido: int
     fecha_hora: datetime
     estado: str
     tipo: str
+    
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda dt: dt.isoformat()
+        }
 
 class SensorMagnetico(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
-    ubicacion: str
     estado: str
     fecha_hora: datetime
     tipo: str
-
+    
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            ObjectId: str,
+            datetime: lambda dt: dt.isoformat()
+        }

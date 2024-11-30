@@ -1,7 +1,7 @@
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
-
+from typing import Optional, List, Any, Dict, Union
 from bson import ObjectId
 import os
 
@@ -14,7 +14,7 @@ client = AsyncIOMotorClient(MONGO_URL)
 database = client['Hogar']
 
 # Colecciones
-collection_admin= database['Admin']
+
 collection_cliente = database['Usuarios']
 collection_casa = database['Casas']
 
@@ -41,18 +41,6 @@ def serialize_object_id(obj):
         return str(obj)
     return obj
 
-class Admin(BaseModel):
-    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    nombre: str
-    correo: str
-    contraseña: str  # Se recomienda almacenar la contraseña en formato hasheado
-    rol: str = "admin"  # Asignamos el rol 'admin' de manera predeterminada
-    estado: str = "activo"  # Un campo opcional que puedes utilizar para gestionar el estado del usuario
-    fecha_creacion: datetime = Field(default_factory=datetime.utcnow)  # Fecha de creación del admin
-
-    # Método para validar el admin si es necesario
-    def is_admin(self):
-        return self.rol == "admin"
 
     
 class Cliente(BaseModel):
@@ -73,11 +61,13 @@ class Casa(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     nombre: str
     direccion: str
-    usuario_id: PyObjectId  # Referencia al usuario propietario
-    sensores: list[PyObjectId] = []  # Referencias a los sensores
-    
+    sensores: Optional[List[Dict[str, Union[PyObjectId, str]]]] = []
+
     class Config:
-        json_encoders = {ObjectId: str}
+        arbitrary_types_allowed = True
+        json_encoders = {
+            ObjectId: str
+        }
         
 class TokenData(BaseModel):
     correo: str 
@@ -85,7 +75,9 @@ class TokenData(BaseModel):
 
 class SensorRequest(BaseModel):
     tipo_sensor: str
-    sensor_data: dict
+    sensor_data: Dict[str, Any]
+    class Config:
+        arbitrary_types_allowed = True
     
 class TokenResponse(BaseModel):
     access_token: str
