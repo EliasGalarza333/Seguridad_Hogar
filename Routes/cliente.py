@@ -1,3 +1,5 @@
+from email.quoprimime import unquote
+
 from bson import ObjectId
 from fastapi import APIRouter
 from fastapi import HTTPException, Depends, status
@@ -13,6 +15,11 @@ router = APIRouter()
 
 @router.get("/clientes/casas/{cliente_correo}")
 async def get_casas(cliente_correo: str, token: str = Depends(oauth2_scheme)):
+
+    cliente_correo = unquote(cliente_correo)
+
+        # Verificar si el correo recibido es correcto
+    print(f"Correo recibido: {cliente_correo}")
     """
     Obtiene todas las casas asociadas a un cliente.
     """
