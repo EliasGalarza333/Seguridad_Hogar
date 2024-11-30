@@ -6,9 +6,9 @@ from auth import get_current_user, oauth2_scheme, encriptar_contraseña
 from Modelos.models import collection_gas, collection_humo, collection_magnetico, collection_movimiento, collection_sonido
 from Modelos.user_models import Cliente, CambiarContraseñaRequest
 from Modelos.user_models import collection_cliente, collection_casa
+from pymongo import errors
 
 router = APIRouter()
-
 
 @router.get("/clientes/casas/{cliente_correo}")
 async def get_casas(cliente_correo: str, token: str = Depends(oauth2_scheme)):
@@ -48,6 +48,11 @@ async def get_casas(cliente_correo: str, token: str = Depends(oauth2_scheme)):
 
         return {"data": casas_serializable}
 
+    except errors.InvalidId as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"ID de usuario no válido: {str(e)}"
+        )
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -56,7 +61,6 @@ async def get_casas(cliente_correo: str, token: str = Depends(oauth2_scheme)):
             status_code=500,
             detail=f"Error al obtener las casas: {str(e)}"
         )
-
 
 
 # Obtener los sensores de la casa de cada cliente
