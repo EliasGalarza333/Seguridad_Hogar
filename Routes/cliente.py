@@ -7,6 +7,7 @@ from Modelos.models import collection_gas, collection_humo, collection_magnetico
 from Modelos.user_models import Cliente, CambiarContraseñaRequest
 from Modelos.user_models import collection_cliente, collection_casa
 from pymongo import errors
+from pydantic import ValidationError
 
 router = APIRouter()
 
@@ -48,10 +49,10 @@ async def get_casas(cliente_correo: str, token: str = Depends(oauth2_scheme)):
 
         return {"data": casas_serializable}
 
-    except errors.InvalidId as e:
+    except ValidationError as ve:
         raise HTTPException(
             status_code=400,
-            detail=f"ID de usuario no válido: {str(e)}"
+            detail=f"Error de validación de datos: {str(ve)}"
         )
     except HTTPException as he:
         raise he
@@ -61,7 +62,6 @@ async def get_casas(cliente_correo: str, token: str = Depends(oauth2_scheme)):
             status_code=500,
             detail=f"Error al obtener las casas: {str(e)}"
         )
-
 
 # Obtener los sensores de la casa de cada cliente
 @router.get("/clientes/casas/{usuario_id}/{casa_id}/sensores")
