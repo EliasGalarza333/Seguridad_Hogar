@@ -1,87 +1,119 @@
-from email.quoprimime import unquote
-
 from bson import ObjectId
 from fastapi import APIRouter
 from fastapi import HTTPException, Depends, status
-
+from typing import List
 from auth import get_current_user, oauth2_scheme, encriptar_contraseña
 from Modelos.models import collection_gas, collection_humo, collection_magnetico, collection_movimiento, collection_sonido
-from Modelos.user_models import Cliente, CambiarContraseñaRequest
+from Modelos.user_models import Cliente, CambiarContraseñaRequest, CasaInfo
 from Modelos.user_models import collection_cliente, collection_casa
-from pymongo import errors
-from pydantic import ValidationError
-
 router = APIRouter()
 
-@router.get("/clientes/casas/{cliente_correo}")
-async def get_casas(cliente_correo: str, token: str = Depends(oauth2_scheme)):
 
 
-        # Verificar si el correo recibido es correcto
-    print(f"Correo recibido: {cliente_correo}")
-    """
-    Obtiene todas las casas asociadas a un cliente.
-    """
-    print(f"Solicitud recibida para {cliente_correo}")
 
+# Ruta para actualizar la contraseña
+@router.put("/clientes/actualizar-contraseña")
+async def actualizar_contraseña(
+        nueva_contraseña: CambiarContraseñaRequest,
+        current_user: Cliente = Depends(get_current_user)
+):
+    # Lógica para cambiar la contraseña
+    hashed_password = encriptar_contraseña(nueva_contraseña.nueva_contraseña)
+    await collection_cliente.update_one(
+        {"correo": current_user.correo},
+        {"$set": {"contraseña": hashed_password}}
+    )
+    return {"detail": "Contraseña actualizada correctamente"}
+
+
+
+
+# Función para convertir ObjectId a str
+def convert_objectid(casas: List[dict]) -> List[CasaInfo]:
+    """Convierte todos los ObjectIds dentro de un objeto o lista a strings y crea instancias de CasaInfo."""
+    return [
+        CasaInfo(
+            id=str(casa["_id"]),
+            nombre=casa["nombre"]
+        ) for casa in casas
+    ]
+# Endpoint para obtener solamente las casas y su ID
+@router.get("/clientes/{cliente_id}/casas")
+async def get_casas_de_cliente(cliente_id: str, token: str = Depends(oauth2_scheme)):
     try:
-        # Validar token y obtener usuario actual
+        # Validar el token y obtener el usuario actual
         current_user = await get_current_user(token)
 
-        # Validar que el correo coincida con el usuario autenticado
-        if current_user.correo.strip().lower() != cliente_correo.strip().lower():
+        # Verificar que el cliente autenticado sea el propietario o tenga permisos de administrador
+        if str(current_user.id) != cliente_id and current_user.rol != "admin":
             raise HTTPException(
                 status_code=403,
-                detail="No tienes permiso para ver estas casas"
+                detail="No tienes permiso para acceder a estas casas"
             )
 
-        # Obtener el usuario en la base de datos
-        usuario_db = await collection_cliente.find_one({"correo": cliente_correo})
-        if not usuario_db:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        # Buscar todas las casas asociadas al cliente
+        casas = await collection_casa.find({"usuario_id": ObjectId(cliente_id)}).to_list(length=None)
 
-        usuario_id = usuario_db["_id"]
+        # Convertir los ObjectId a string y crear instancias de CasaInfo
+        casas_serializable = convert_objectid(casas)
 
-        # Obtener las casas asociadas al usuario
-        casas = await collection_casa.find({"usuario_id": usuario_id}).to_list(length=None)
-        casas_serializable = [
-            {
-                "_id": str(casa["_id"]),
-                "nombre": casa["nombre"],
-                "direccion": casa["direccion"]
-            }
-            for casa in casas
-        ]
-
+        # Ajuste de la estructura de la respuesta
         return {"data": casas_serializable}
 
-    except ValidationError as ve:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error de validación de datos: {str(ve)}"
-        )
     except HTTPException as he:
         raise he
     except Exception as e:
-        print(f"Error en la solicitud: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error al obtener las casas: {str(e)}"
         )
 
-# Obtener los sensores de la casa de cada cliente
-@router.get("/clientes/casas/{usuario_id}/{casa_id}/sensores")
-async def obtener_sensores_de_casa(
+
+# En cliente.py
+
+# Endpoint para obtener la información básica del cliente
+@router.get("/clientes/perfil", response_model=Cliente)
+async def get_cliente_perfil(current_user: Cliente = Depends(get_current_user)):
+    try:
+        # Buscar al cliente por su correo en la colección
+        cliente_db = await collection_cliente.find_one({"correo": current_user.correo})
+        if not cliente_db:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cliente no encontrado"
+            )
+
+        # Crear un diccionario con solo la información requerida
+        perfil_cliente = {
+            "id": str(cliente_db["_id"]),
+            "nombre": cliente_db.get("nombre", ""),
+            "correo": cliente_db["correo"],
+            "contraseña": None,
+            "rol": cliente_db.get("rol", "")
+        }
+
+        # Serializamos y devolvemos el cliente
+        cliente = Cliente(**perfil_cliente)
+        return cliente
+
+    except Exception as e:
+        # Agregar detalles del error en la respuesta para facilitar la depuración
+        print(f"Error al obtener el perfil del cliente: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener el perfil del cliente: {str(e)}"
+        )
+
+# Nueva ruta para obtener sensores de una casa específica del cliente
+@router.get("/clientes/{usuario_id}/casas/{casa_id}/sensores")
+async def obtener_sensores_de_casa_especifica(
         usuario_id: str,
         casa_id: str,
-        token: str = Depends(oauth2_scheme)
+        current_user: Cliente = Depends(get_current_user)
 ):
     try:
-        # Validar el token y obtener usuario
-        current_user = await get_current_user(token)
-
-        # Validar permisos: Admin o el mismo usuario
-        if str(current_user.id) != usuario_id and current_user.rol != "cliente":
+        # Validar permisos: Solo el propietario puede ver sus sensores
+        if str(current_user.id) != usuario_id:
             raise HTTPException(
                 status_code=403,
                 detail="No tienes permiso para ver los sensores de esta casa"
@@ -136,47 +168,3 @@ async def obtener_sensores_de_casa(
             status_code=500,
             detail=f"Error al obtener los sensores: {str(e)}"
         )
-
-
-# Endpoint para obtener la información del cliente
-@router.get("/clientes/perfil", response_model=Cliente)
-async def get_cliente_perfil(current_user: Cliente = Depends(get_current_user)):
-    try:
-        # Buscar al cliente por su correo en la colección
-        cliente_db = await collection_cliente.find_one({"correo": current_user.correo})
-        if not cliente_db:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Cliente no encontrado"
-            )
-
-        # Eliminar la contraseña para no devolverla
-        cliente_db.pop("_id", None)
-        cliente_db.pop("contraseña", None)
-
-        # Serializamos y devolvemos el cliente
-        cliente = Cliente(**cliente_db)
-        return cliente
-
-    except Exception as e:
-        # Agregar detalles del error en la respuesta para facilitar la depuración
-        print(f"Error al obtener el perfil del cliente: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al obtener el perfil del cliente: {str(e)}"
-        )
-
-
-# Ruta para actualizar la contraseña
-@router.put("/clientes/actualizar-contraseña")
-async def actualizar_contraseña(
-        nueva_contraseña: CambiarContraseñaRequest,
-        current_user: Cliente = Depends(get_current_user)
-):
-    # Lógica para cambiar la contraseña
-    hashed_password = encriptar_contraseña(nueva_contraseña.nueva_contraseña)
-    await collection_cliente.update_one(
-        {"correo": current_user.correo},
-        {"$set": {"contraseña": hashed_password}}
-    )
-    return {"detail": "Contraseña actualizada correctamente"}
