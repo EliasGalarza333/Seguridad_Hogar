@@ -16,7 +16,6 @@ router = APIRouter()
 @router.get("/clientes/casas/{cliente_correo}")
 async def get_casas(cliente_correo: str, token: str = Depends(oauth2_scheme)):
 
-    cliente_correo = unquote(cliente_correo)
 
         # Verificar si el correo recibido es correcto
     print(f"Correo recibido: {cliente_correo}")
