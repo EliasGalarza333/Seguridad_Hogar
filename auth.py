@@ -38,23 +38,7 @@ def decode_access_token(token: str) -> dict:
             detail="Token inválido o expirado"
         )
 
-async def get_current_user_from_token(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        correo: str = payload.get("sub")
-        rol: str = payload.get("rol")
-        if correo is None:
-            return None
-        
-        # Verificar si el usuario existe en la base de datos
-        user = await collection_cliente.find_one({"correo": correo})
-        if user is None:
-            return None
-            
-        return {"correo": correo, "rol": rol}
-    except JWTError:
-        return None
-    
+
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> Cliente:
     try:
         # Decodificar el token
@@ -80,38 +64,22 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Cliente:
 
 
 # Esta función decodifica el token JWT y devuelve el usuario correspondiente
-async def get_current_user_id(token: str = Depends(oauth2_scheme))-> Cliente:
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="No se pudo validar las credenciales",
-    )
-    
-    try:
-        # Decodificar el token
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-        
-        # Buscar el usuario en la base de datos usando el ID
-        user = await collection_cliente.find_one({"_id": user_id})
-        if user is None:
-            raise credentials_exception
-        return user
-    except JWTError:
-        raise credentials_exception
 
 
 
 # Verificar rol
-def verify_admin(token: str = Depends(oauth2_scheme)):
+def verify_cliente(token: str = Depends(oauth2_scheme)):
+    # Decodificar el token y obtener el correo
     payload = decode_access_token(token)
-    if payload.get("rol") != "admin":
+    correo: str = payload.get("sub")
+
+    if correo is None:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tiene permisos para realizar esta acción"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido"
         )
-    return payload
+
+    return correo
 
 
 
