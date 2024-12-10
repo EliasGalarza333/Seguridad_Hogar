@@ -38,7 +38,7 @@ def decode_access_token(token: str) -> dict:
             detail="Token inválido o expirado"
         )
 
-
+'''
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> Cliente:
     try:
         # Decodificar el token
@@ -59,7 +59,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Cliente:
         return Cliente(**user)
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
-
+'''
 
 
 
@@ -98,3 +98,46 @@ def encriptar_contraseña(contraseña: str) -> str:
 
 def verificar_contraseña(contraseña_plana: str, contraseña_encriptada: str) -> bool:
     return pwd_context.verify(contraseña_plana, contraseña_encriptada)
+
+credentials_exception = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="No se pudo validar las credenciales",
+    headers={"WWW-Authenticate": "Bearer"}
+)
+
+# Lista negra de tokens (en memoria)
+# NOTA: En producción, considera usar Redis u otra solución persistente
+token_blacklist = set()
+
+# Middleware de verificación de token en lista negra
+async def check_token_blacklist(token: str = Depends(oauth2_scheme)):
+    if token in token_blacklist:
+        raise HTTPException(
+            status_code=401, 
+            detail="Token ha sido invalidado. Por favor, inicie sesión nuevamente."
+        )
+    return token
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> Cliente:
+    try:
+        # Primero verificar si el token está en la lista negra
+        await check_token_blacklist(token)
+
+        # Decodificar el token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        correo: str = payload.get("sub")
+        rol: str = payload.get("rol")
+
+        # Validar los datos extraídos del token
+        if correo is None or rol is None:
+            raise HTTPException(status_code=401, detail="Token inválido")
+
+        # Buscar el usuario en la base de datos
+        user = await collection_cliente.find_one({"correo": correo})
+        if user is None:
+            raise HTTPException(status_code=401, detail="Usuario no encontrado")
+
+        # Retornar el usuario como un objeto Cliente
+        return Cliente(**user)
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token inválido")
