@@ -167,13 +167,23 @@ async def recuperar_contraseña(data: RecuperarContraseñaRequest):
         nueva_contraseña_encriptada = encriptar_contraseña(nueva_contraseña)
 
         # Actualizar la contraseña en la base de datos
-        await collection_cliente.update_one(
+        resultado = await collection_cliente.update_one(
             {"_id": cliente["_id"]},
             {"$set": {"contraseña": nueva_contraseña_encriptada}}
         )
 
+        if resultado.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al actualizar la contraseña en la base de datos"
+            )
+
         # Enviar correo electrónico con la nueva contraseña
-        correo_enviado = enviar_correo_recuperacion(cliente["correo"], nueva_contraseña)
+        correo_enviado = await enviar_correo_recuperacion(
+            correo_destinatario=correo,
+            nueva_contraseña=nueva_contraseña
+        )
+
         if not correo_enviado:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

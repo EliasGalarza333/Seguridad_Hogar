@@ -6,6 +6,8 @@ from fastapi import APIRouter
 from fastapi import HTTPException, Depends, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.security import OAuth2PasswordRequestForm
+
+from Routes.cliente import convert_objectid
 from enviar_email import enviar_correo_bienvenida
 from auth import get_current_user, oauth2_scheme, create_access_token, generar_contraseña_aleatoria, \
     encriptar_contraseña, verificar_contraseña, token_blacklist
@@ -38,22 +40,24 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+
 # Endpoint de Logout
 @router.post("/logout")
 async def logout(token: str = Depends(oauth2_scheme)):
     """
     Cierra la sesión del usuario actual invalidando su token JWT.
+    
     - No requiere body
     - Requiere token de autorización Bearer
     - Agrega el token actual a una lista negra
     """
     # Agregar token a lista negra
     token_blacklist.add(token)
+    
     return {"message": "Sesión cerrada exitosamente"}
 
 
 
-#Ruta de crear clientes y enviar email
 @router.post("/admin/clientes", response_model=Cliente, status_code=status.HTTP_201_CREATED)
 async def create_cliente(
     cliente: Cliente,
@@ -94,10 +98,13 @@ async def create_cliente(
         created_cliente = await collection_cliente.find_one({"_id": result.inserted_id})
 
         # Enviar correo electrónico con la contraseña
-        correo_enviado = enviar_correo_bienvenida(cliente.correo, contraseña_generada)
-        
+        correo_enviado = await enviar_correo_bienvenida(cliente.correo, contraseña_generada)
+
         if not correo_enviado:
-            print(f"No se pudo enviar el correo de bienvenida a {cliente.correo}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"El cliente fue creado pero no se pudo enviar el correo de bienvenida a {cliente.correo}"
+            )
 
         # Convertir ObjectId a string y ocultar contraseña
         created_cliente["_id"] = str(created_cliente["_id"])
@@ -105,49 +112,37 @@ async def create_cliente(
 
         return Cliente(**created_cliente)
 
+    except HTTPException as http_exc:
+        raise http_exc  # Relanzar excepciones HTTP ya manejadas
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al crear el cliente: {str(e)}"
-        )     
-        
+        )       
 #Ruta para traer la información básica de todos los clientes
+
 @router.get("/admin/clientes", response_model=List[Cliente])
-async def get_clientes(current_user: Cliente = Depends(get_current_user)):
-    # Verificamos que el usuario sea un admin
-    if current_user.rol != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para ver esta información"
-        )
-
+async def get_clientes():
     try:
-        # Realizamos la consulta a la base de datos
-        cursor = collection_cliente.find(
-            {"rol": "cliente"},
-            {
-                "nombre": 1,
-                "correo": 1,
-                "contraseña": 1,
-                "rol": 1,
-                "casas": 1,
-                "_id": 1  # Incluimos el _id para evitar problemas
-            }
-        )
-        clientes = await cursor.to_list(length=None)
+        # Obtiene solo los clientes con rol "cliente"
+        clientes = await collection_cliente.find({"rol": "cliente"}).to_list(length=None)
 
-        # Convertir ObjectIds a strings para serialización JSON
         for cliente in clientes:
-            # Convertimos el ObjectId a str en el campo casas
-            if "casas" in cliente:
-                cliente["casas"] = [{"id": str(casa["_id"]), "nombre": casa["nombre"]} for casa in cliente["casas"]]
-
-            # Aseguramos que el _id sea un string
-            cliente["_id"] = str(cliente["_id"])
+            # Si el cliente tiene casas, aseguramos que tengan el formato esperado
+            casas = cliente.get("casas", [])
+            cliente["casas"] = [
+                {
+                    "id": str(casa["_id"]) if isinstance(casa.get("_id"), ObjectId) else casa.get("id", ""),
+                    "nombre": casa.get("nombre", "Sin nombre")
+                }
+                for casa in casas if isinstance(casa, dict)
+            ]
 
             # Eliminamos la contraseña antes de devolver la información
-            cliente.pop('contraseña', None)
+            cliente.pop("contraseña", None)
 
+        # Devolvemos los clientes con la información correcta de casas
         return [Cliente(**cliente) for cliente in clientes]
 
     except Exception as e:
@@ -155,6 +150,7 @@ async def get_clientes(current_user: Cliente = Depends(get_current_user)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al obtener los usuarios: {str(e)}"
         )
+
 
 #Endpoint para crear la casa a un cliente
 @router.post("/admin/clientes/{cliente_id}/casas", response_model=Casa, status_code=status.HTTP_201_CREATED)
@@ -374,24 +370,26 @@ async def obtener_sensores_de_casa(
             detail=f"Error al obtener los sensores: {str(e)}"
         )
 
-
+'''
 @router.get("/admin/clientes", response_model=List[Cliente])
 async def get_clientes():
     try:
         # Obtiene solo los clientes con rol "cliente"
         clientes = await collection_cliente.find({"rol": "cliente"}).to_list(length=None)
 
-        # Iteramos sobre los clientes para estructurar las casas adecuadamente
         for cliente in clientes:
-            # Si el cliente tiene casas, las extraemos
-            if "casas" in cliente:
-                # Convertimos manualmente los ObjectId a string para cada casa
-                cliente["casas"] = [
-                    {"id": str(casa["_id"]), "nombre": casa["nombre"]} for casa in cliente["casas"]
-                ]
+            # Si el cliente tiene casas, aseguramos que tengan el formato esperado
+            casas = cliente.get("casas", [])
+            cliente["casas"] = [
+                {
+                    "id": str(casa["_id"]) if isinstance(casa.get("_id"), ObjectId) else casa.get("id", ""),
+                    "nombre": casa.get("nombre", "Sin nombre")
+                }
+                for casa in casas if isinstance(casa, dict)
+            ]
 
             # Eliminamos la contraseña antes de devolver la información
-            cliente.pop('contraseña', None)
+            cliente.pop("contraseña", None)
 
         # Devolvemos los clientes con la información correcta de casas
         return [Cliente(**cliente) for cliente in clientes]
@@ -401,13 +399,107 @@ async def get_clientes():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al obtener los usuarios: {str(e)}"
         )
+'''
+@router.post("/admin/clientes/completo", response_model=Cliente, status_code=status.HTTP_201_CREATED)
+async def create_cliente_completo(
+    data: dict,  # Recibe un diccionario con toda la información
+    current_user: Cliente = Depends(get_current_user)
+):
+    if current_user.rol != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permiso para realizar esta acción"
+        )
 
-def convert_objectid(obj):
-    """Convierte todos los ObjectIds dentro de un objeto o lista a strings."""
-    if isinstance(obj, dict):
-        return {k: convert_objectid(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_objectid(item) for item in obj]
-    elif isinstance(obj, ObjectId):
-        return str(obj)
-    return obj
+    try:
+        # Crear el cliente
+        cliente_data = data.get("cliente", {})
+        if not cliente_data.get("correo"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El correo del cliente es obligatorio"
+            )
+
+        existing_cliente = await collection_cliente.find_one({"correo": cliente_data["correo"]})
+        if existing_cliente:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ya existe un cliente con ese correo"
+            )
+
+        contraseña_generada = generar_contraseña_aleatoria()
+        contraseña_encriptada = encriptar_contraseña(contraseña_generada)
+        cliente_data["contraseña"] = contraseña_encriptada
+        cliente_data["casas"] = []
+        cliente_result = await collection_cliente.insert_one(cliente_data)
+        cliente_id = cliente_result.inserted_id
+
+        # Enviar correo con la contraseña generada
+        correo_enviado = await enviar_correo_bienvenida(cliente_data["correo"], contraseña_generada)
+        if not correo_enviado:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al enviar el correo de bienvenida"
+            )
+
+        # Crear casas y sensores
+        casas_data = data.get("casas", [])
+        for casa in casas_data:
+            sensores = casa.pop("sensores", [])
+            casa["usuario_id"] = cliente_id
+            casa_result = await collection_casa.insert_one(casa)
+            casa_id = casa_result.inserted_id
+
+            # Crear sensores y asociarlos a la casa
+            for sensor in sensores:
+                tipo_sensor = sensor.get("tipo_sensor")
+                if tipo_sensor not in ["gas", "humo", "movimiento", "sonido", "magnetico"]:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Tipo de sensor no válido: {tipo_sensor}"
+                    )
+
+                # Generar datos del sensor
+                sensor_data = {
+                    "marca": "Generica",
+                    "modelo": f"Modelo-{tipo_sensor.upper()}",
+                    "tipo": tipo_sensor
+                }
+
+                sensor_collection = {
+                    "gas": collection_gas,
+                    "humo": collection_humo,
+                    "movimiento": collection_movimiento,
+                    "sonido": collection_sonido,
+                    "magnetico": collection_magnetico,
+                }[tipo_sensor]
+
+                sensor_result = await sensor_collection.insert_one(sensor_data)
+                sensor_id = sensor_result.inserted_id
+                await collection_casa.update_one(
+                    {"_id": casa_id},
+                    {"$push": {"sensores": {"sensor_obj_id": sensor_id, "sensor_tipo": tipo_sensor}}}
+                )
+
+            # Asociar casa al cliente
+            casa_info = {"id": str(casa_id), "nombre": casa["nombre"]}
+            await collection_cliente.update_one(
+                {"_id": cliente_id},
+                {"$push": {"casas": casa_info}}
+            )
+
+        # Devolver el cliente creado
+        created_cliente = await collection_cliente.find_one({"_id": cliente_id})
+        if not created_cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+        created_cliente["_id"] = str(created_cliente["_id"])
+        created_cliente["contraseña"] = None  # No incluir la contraseña en la respuesta
+
+        return Cliente(**created_cliente)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al crear el cliente completo: {str(e)}"
+        )
