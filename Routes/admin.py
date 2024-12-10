@@ -8,7 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.security import OAuth2PasswordRequestForm
 from enviar_email import enviar_correo_bienvenida
 from auth import get_current_user, oauth2_scheme, create_access_token, generar_contraseña_aleatoria, \
-    encriptar_contraseña, verificar_contraseña
+    encriptar_contraseña, verificar_contraseña, token_blacklist
 from Modelos.models import collection_gas, collection_humo, collection_magnetico, collection_movimiento, collection_sonido
 from Modelos.user_models import Cliente, Casa, SensorRequest, TokenResponse, CasaInfo
 from Modelos.user_models import collection_cliente, collection_casa
@@ -36,6 +36,21 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     })
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+# Endpoint de Logout
+@router.post("/logout")
+async def logout(token: str = Depends(oauth2_scheme)):
+    """
+    Cierra la sesión del usuario actual invalidando su token JWT.
+    - No requiere body
+    - Requiere token de autorización Bearer
+    - Agrega el token actual a una lista negra
+    """
+    # Agregar token a lista negra
+    token_blacklist.add(token)
+    return {"message": "Sesión cerrada exitosamente"}
+
 
 
 #Ruta de crear clientes y enviar email
