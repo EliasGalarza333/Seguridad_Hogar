@@ -272,8 +272,8 @@ async def agregar_sensor_a_casa(
 
         # Insertar el sensor en la colección correspondiente
         sensor_data = sensor_request.sensor_data
-        sensor_data["fecha_hora"] = datetime.utcnow()  # Agregar la fecha y hora actual
-        sensor_data["tipo"] = tipo_sensor  # Asegurar que se almacene el tipo de sensor
+        #sensor_data["_id"] = tipo_sensor  # Agrega el id
+        sensor_data["nombre"] = tipo_sensor  # AAgrega el nombre
         nuevo_sensor = await sensor_collection.insert_one(sensor_data)
 
         # Actualizar la casa con la referencia al sensor
@@ -345,8 +345,6 @@ async def obtener_sensores_de_casa(
                     "_id": str(sensor_info["_id"]),
                     "tipo": sensor_tipo,
                     "ubicacion": sensor_info.get("ubicacion", ""),
-                    "estado": sensor_info.get("estado", "desconocido"),
-                    "fecha_hora": sensor_info.get("fecha_hora", ""),
                     # Otros campos específicos del sensor según su tipo
                 }
                 sensores_detallados.append(sensor_serializable)

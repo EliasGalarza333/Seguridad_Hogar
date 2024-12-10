@@ -239,8 +239,6 @@ async def obtener_sensores_de_casa_especifica(
                     "_id": str(sensor_info["_id"]),
                     "tipo": sensor_tipo,
                     "ubicacion": sensor_info.get("ubicacion", ""),
-                    "estado": sensor_info.get("estado", "desconocido"),
-                    "fecha_hora": sensor_info.get("fecha_hora", ""),
                     # Otros campos específicos del sensor según su tipo
                 }
                 sensores_detallados.append(sensor_serializable)
