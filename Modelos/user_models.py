@@ -48,6 +48,14 @@ class CasaInfo(BaseModel):
 
     class Config:
         json_encoders = {ObjectId: str} 
+        
+class CasaInfo1(BaseModel):
+    id: str  # Convertimos ObjectId a string
+    nombre: str
+    direccion: str
+
+    class Config:
+        json_encoders = {ObjectId: str} 
     
 class Cliente(BaseModel):
     id: PyObjectId | None = Field(None, alias="_id")
@@ -89,3 +97,5 @@ class TokenResponse(BaseModel):
 class CambiarContraseñaRequest(BaseModel):
     nueva_contraseña: str
 
+class RecuperarContraseñaRequest(BaseModel):
+    correo: str
