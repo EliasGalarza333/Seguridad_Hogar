@@ -180,7 +180,8 @@ async def agregar_casa_a_cliente(
         # Crear el objeto de la casa con solo el id y el nombre
         casa_objeto = {
             "_id": str(nueva_casa["_id"]),
-            "nombre": nueva_casa["nombre"]
+            "nombre": nueva_casa["nombre"],
+            "direccion": nueva_casa["direccion"]
         }
 
         # Actualizar el cliente para agregar el objeto de la casa con id y nombre

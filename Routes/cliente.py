@@ -2,10 +2,11 @@ from bson import ObjectId
 from fastapi import APIRouter
 from fastapi import HTTPException, Depends, status
 from typing import List
-from auth import get_current_user, oauth2_scheme, encriptar_contraseña
+from auth import get_current_user, oauth2_scheme, encriptar_contraseña, generar_contraseña_aleatoria
 from Modelos.models import collection_gas, collection_humo, collection_magnetico, collection_movimiento, collection_sonido
-from Modelos.user_models import Cliente, CambiarContraseñaRequest, CasaInfo
+from Modelos.user_models import Cliente, CambiarContraseñaRequest, CasaInfo, CasaInfo1, RecuperarContraseñaRequest
 from Modelos.user_models import collection_cliente, collection_casa
+from enviar_email import enviar_correo_recuperacion
 router = APIRouter()
 
 
@@ -37,6 +38,18 @@ def convert_objectid(casas: List[dict]) -> List[CasaInfo]:
             nombre=casa["nombre"]
         ) for casa in casas
     ]
+    
+    # Función para convertir ObjectId a str
+def convert1_objectid(casas: List[dict]) -> List[CasaInfo1]:
+    """Convierte todos los ObjectIds dentro de un objeto o lista a strings y crea instancias de CasaInfo."""
+    return [
+        CasaInfo1(
+            id=str(casa["_id"]),
+            nombre=casa["nombre"],
+            direccion=casa["direccion"]
+        ) for casa in casas
+    ]
+    
 # Endpoint para obtener solamente las casas y su ID
 @router.get("/clientes/{cliente_id}/casas")
 async def get_casas_de_cliente(cliente_id: str, token: str = Depends(oauth2_scheme)):
@@ -56,6 +69,37 @@ async def get_casas_de_cliente(cliente_id: str, token: str = Depends(oauth2_sche
 
         # Convertir los ObjectId a string y crear instancias de CasaInfo
         casas_serializable = convert_objectid(casas)
+
+        # Ajuste de la estructura de la respuesta
+        return {"data": casas_serializable}
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al obtener las casas: {str(e)}"
+        )
+
+# Endpoint para obtener solamente las casas y su ID
+@router.get("/clientes/{cliente_id}/casas-direccion")
+async def get_casas_de_cliente(cliente_id: str, token: str = Depends(oauth2_scheme)):
+    try:
+        # Validar el token y obtener el usuario actual
+        current_user = await get_current_user(token)
+
+        # Verificar que el cliente autenticado sea el propietario o tenga permisos de administrador
+        if str(current_user.id) != cliente_id and current_user.rol != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permiso para acceder a estas casas"
+            )
+
+        # Buscar todas las casas asociadas al cliente
+        casas = await collection_casa.find({"usuario_id": ObjectId(cliente_id)}).to_list(length=None)
+
+        # Convertir los ObjectId a string y crear instancias de CasaInfo
+        casas_serializable = convert1_objectid(casas)
 
         # Ajuste de la estructura de la respuesta
         return {"data": casas_serializable}
@@ -89,7 +133,7 @@ async def get_cliente_perfil(current_user: Cliente = Depends(get_current_user)):
             "nombre": cliente_db.get("nombre", ""),
             "correo": cliente_db["correo"],
             "contraseña": None,
-            "rol": cliente_db.get("rol", "")
+            "rol": None
         }
 
         # Serializamos y devolvemos el cliente
@@ -104,9 +148,51 @@ async def get_cliente_perfil(current_user: Cliente = Depends(get_current_user)):
             detail=f"Error al obtener el perfil del cliente: {str(e)}"
         )
 
+@router.post("/clientes/recuperar", status_code=status.HTTP_200_OK)
+async def recuperar_contraseña(data: RecuperarContraseñaRequest):
+    correo = data.correo
+    try:
+        # Verificar si el cliente existe
+        cliente = await collection_cliente.find_one({"correo": correo})
+        if not cliente:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cliente no encontrado"
+            )
+
+        # Generar una nueva contraseña temporal
+        nueva_contraseña = generar_contraseña_aleatoria()
+
+        # Encriptar la nueva contraseña
+        nueva_contraseña_encriptada = encriptar_contraseña(nueva_contraseña)
+
+        # Actualizar la contraseña en la base de datos
+        await collection_cliente.update_one(
+            {"_id": cliente["_id"]},
+            {"$set": {"contraseña": nueva_contraseña_encriptada}}
+        )
+
+        # Enviar correo electrónico con la nueva contraseña
+        correo_enviado = enviar_correo_recuperacion(cliente["correo"], nueva_contraseña)
+        if not correo_enviado:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al enviar el correo electrónico"
+            )
+
+        return {"message": "Se ha enviado una nueva contraseña a tu correo electrónico"}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al recuperar la contraseña: {str(e)}"
+        )
+
+
 # Nueva ruta para obtener sensores de una casa específica del cliente
 @router.get("/clientes/{usuario_id}/casas/{casa_id}/sensores")
 async def obtener_sensores_de_casa_especifica(
+    
         usuario_id: str,
         casa_id: str,
         current_user: Cliente = Depends(get_current_user)
