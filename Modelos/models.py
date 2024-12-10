@@ -37,46 +37,31 @@ class PyObjectId(ObjectId):
 # Modelos de los sensores
 class SensorGas(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
+    nombre: str
     ubicacion: str
-    nivel_gas: int
-    fecha_hora: datetime
-    estado: str
     tipo: str
 
 class SensorHumo(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
+    nombre: str
     ubicacion: str
-    nivel_humo: int
-    nivel_toxicidad: int
-    fecha_hora: datetime
-    estado: str
     tipo: str
 
 class SensorMovimiento(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
+    nombre: str
     ubicacion: str
-    intensidad: int
-    fecha_hora: datetime
-    estado: str
     tipo: str
 
 class SensorSonido(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    sensor_id: str
+    nombre: str
     ubicacion: str
-    nivel_sonido: int
-    fecha_hora: datetime
-    estado: str
     tipo: str
 
 class SensorMagnetico(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     sensor_id: str
     ubicacion: str
-    estado: str
-    fecha_hora: datetime
     tipo: str
 
