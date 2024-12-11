@@ -266,24 +266,31 @@ async def obtener_sensores_de_casa_especifica(
         
         
 @router.get("/clientes/historial")
-async def obtener_historial(
-    tipo_sensor: str | None = Query(None, description="El tipo de sensor para filtrar (opcional)"),
-    orden: str = Query("asc", description="Orden de los datos: 'asc' para ascendente, 'desc' para descendente")
-):
+async def obtener_historial():
     try:
-        # Crear el filtro base
+        # Crear el filtro base para obtener los documentos que tengan "status"
         filtro = {"status": {"$exists": True}}
 
-        # Agregar filtro por tipo de sensor si se proporciona
-        if tipo_sensor:
-            filtro["tipo"] = tipo_sensor
+        # Obtener todos los documentos filtrados, ordenados por tipo de sensor y timestamp descendente
+        cursor = collection_movimiento.find(filtro, {"_id": 0}).sort([("sensor", 1), ("timestamp", -1)])
+        documentos = await cursor.to_list(length=1000)  # Límite opcional de 1000 documentos
 
-        # Definir el orden (1 para ascendente, -1 para descendente)
-        orden_mongo = 1 if orden.lower() == "asc" else -1
+        # Agrupar por tipo de sensor y filtrar los últimos dos cambios de status por cada uno
+        sensores = {}
+        for doc in documentos:
+            tipo = doc.get("sensor")
+            if tipo not in sensores:
+                sensores[tipo] = []
 
-        # Obtener los documentos filtrados y ordenados
-        cursor = collection_movimiento.find(filtro, {"_id": 0}).sort("status", orden_mongo)
-        eventos = await cursor.to_list(length=1000)  # Límite opcional de 1000 documentos
-        return {"eventos": eventos}
+            # Agregar al grupo si es un cambio en el status
+            if len(sensores[tipo]) < 2:
+                if not sensores[tipo] or sensores[tipo][-1]["status"] != doc["status"]:
+                    sensores[tipo].append(doc)
+
+        # Convertir el diccionario en una lista de resultados
+        resultados = [{"tipo": tipo, "eventos": eventos} for tipo, eventos in sensores.items()]
+
+        return {"sensores": resultados}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener los datos: {str(e)}")
+
