@@ -1,12 +1,13 @@
 from bson import ObjectId
 from fastapi import APIRouter
-from fastapi import HTTPException, Depends, status
+from fastapi import HTTPException, Depends, status, Query
 from typing import List
 from auth import get_current_user, oauth2_scheme, encriptar_contraseña, generar_contraseña_aleatoria
 from Modelos.models import collection_gas, collection_humo, collection_magnetico, collection_movimiento, collection_sonido
 from Modelos.user_models import Cliente, CambiarContraseñaRequest, CasaInfo, CasaInfo1, RecuperarContraseñaRequest
 from Modelos.user_models import collection_cliente, collection_casa
 from enviar_email import enviar_correo_recuperacion
+from motor.motor_asyncio import AsyncIOMotorClient
 router = APIRouter()
 
 
@@ -262,3 +263,27 @@ async def obtener_sensores_de_casa_especifica(
             status_code=500,
             detail=f"Error al obtener los sensores: {str(e)}"
         )
+        
+        
+@router.get("/clientes/historial")
+async def obtener_historial(
+    tipo_sensor: str | None = Query(None, description="El tipo de sensor para filtrar (opcional)"),
+    orden: str = Query("asc", description="Orden de los datos: 'asc' para ascendente, 'desc' para descendente")
+):
+    try:
+        # Crear el filtro base
+        filtro = {"status": {"$exists": True}}
+
+        # Agregar filtro por tipo de sensor si se proporciona
+        if tipo_sensor:
+            filtro["tipo"] = tipo_sensor
+
+        # Definir el orden (1 para ascendente, -1 para descendente)
+        orden_mongo = 1 if orden.lower() == "asc" else -1
+
+        # Obtener los documentos filtrados y ordenados
+        cursor = collection_movimiento.find(filtro, {"_id": 0}).sort("status", orden_mongo)
+        eventos = await cursor.to_list(length=1000)  # Límite opcional de 1000 documentos
+        return {"eventos": eventos}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener los datos: {str(e)}")
