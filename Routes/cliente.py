@@ -269,7 +269,7 @@ async def obtener_sensores_de_casa_especifica(
 async def obtener_historial():
     try:
         # Crear el filtro base para obtener los documentos que tengan "status"
-        filtro = {"status": {"$exists": True}}
+        filtro = {"value": {"$exists": True}}
 
         # Obtener todos los documentos filtrados, ordenados por tipo de sensor y timestamp descendente
         cursor = collection_movimiento.find(filtro, {"_id": 0}).sort([("sensor", 1), ("timestamp", -1)])
@@ -284,7 +284,7 @@ async def obtener_historial():
 
             # Agregar al grupo si es un cambio en el status
             if len(sensores[tipo]) < 2:
-                if not sensores[tipo] or sensores[tipo][-1]["status"] != doc["status"]:
+                if not sensores[tipo] or sensores[tipo][-1]["value"] != doc["value"]:
                     sensores[tipo].append(doc)
 
         # Convertir el diccionario en una lista de resultados
